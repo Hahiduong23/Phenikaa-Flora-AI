@@ -1,0 +1,165 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>Phenikaa-Flora AI | Nhận Diện Hoa Realtime Khuôn Viên Phenikaa</title>
+  <meta name="description" content="Ứng dụng AI nhận diện 10 loài hoa tại khuôn viên Đại học Phenikaa thời gian thực với mô hình YOLOv8 và ONNX Runtime Web.">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="style.css">
+  <!-- ONNX Runtime Web via CDN -->
+  <script src="https://cdn.jsdelivr.net/npm/onnxruntime-web/dist/ort.min.js"></script>
+</head>
+<body>
+  <div class="app-container">
+    <!-- Header -->
+    <header class="app-header">
+      <div class="brand">
+        <span class="brand-logo">🌸</span>
+        <div class="brand-text">
+          <h1>Phenikaa-Flora AI</h1>
+          <p class="subtitle">Nhận diện 10 loài hoa khuôn viên Phenikaa • YOLOv8 Realtime</p>
+        </div>
+      </div>
+      <div class="header-badges">
+        <span class="badge status-badge" id="modelStatusBadge">
+          <span class="status-dot"></span> <span id="modelStatusText">Đang khởi tạo...</span>
+        </span>
+        <span class="badge fps-badge" id="fpsBadge">0 FPS</span>
+      </div>
+    </header>
+
+    <!-- Main Content Area -->
+    <main class="main-content">
+      <!-- Camera / Viewport Container -->
+      <div class="viewport-card">
+        <div class="video-wrapper" id="videoWrapper">
+          <video id="videoElement" autoplay playsinline muted></video>
+          <canvas id="overlayCanvas"></canvas>
+          <img id="staticImagePreview" alt="Ảnh tải lên" style="display: none;">
+
+          <!-- Overlay Guide / Crosshair -->
+          <div class="viewfinder-overlay" id="viewfinderOverlay">
+            <div class="corner top-left"></div>
+            <div class="corner top-right"></div>
+            <div class="corner bottom-left"></div>
+            <div class="corner bottom-right"></div>
+            <div class="scan-line"></div>
+          </div>
+
+          <!-- Loading Spinner -->
+          <div class="viewport-loader" id="viewportLoader">
+            <div class="spinner"></div>
+            <p id="loaderMessage">Đang tải mô hình ONNX...</p>
+          </div>
+        </div>
+
+        <!-- Toolbar / Action Bar -->
+        <div class="viewport-toolbar">
+          <button id="toggleCameraBtn" class="btn btn-primary" title="Bật/Tắt Camera">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"></path><circle cx="12" cy="13" r="4"></circle></svg>
+            <span id="cameraBtnLabel">Bật Camera</span>
+          </button>
+
+          <button id="switchCameraBtn" class="btn btn-secondary" title="Đổi camera trước/sau">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 16v5a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2v-5"></path><polyline points="10 21 12 19 14 21"></polyline><path d="M4 8V3a2 2 0 0 1 2-2h12a2 2 0 0 1 2 2v5"></path><polyline points="14 3 12 5 10 3"></polyline></svg>
+            <span>Đổi Camera</span>
+          </button>
+
+          <label class="btn btn-secondary btn-file" title="Tải ảnh từ máy">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="17 8 12 3 7 8"></polyline><line x1="12" y1="3" x2="12" y2="15"></line></svg>
+            <span>Tải Ảnh</span>
+            <input type="file" id="imageFileInput" accept="image/*" style="display: none;">
+          </label>
+        </div>
+      </div>
+
+      <!-- Controls & Flower Info Column -->
+      <div class="sidebar">
+        <!-- Settings Panel -->
+        <div class="card settings-card">
+          <div class="card-header">
+            <h3>⚙️ Tùy Chỉnh Phát Hiện</h3>
+          </div>
+          <div class="card-body">
+            <div class="control-group">
+              <div class="control-label">
+                <span>Ngưỡng tin cậy (Confidence)</span>
+                <span class="value" id="confValue">0.35</span>
+              </div>
+              <input type="range" id="confSlider" min="0.10" max="0.90" step="0.05" value="0.35">
+            </div>
+
+            <div class="control-group">
+              <div class="control-label">
+                <span>Ngưỡng lọc trùng (IoU / NMS)</span>
+                <span class="value" id="iouValue">0.45</span>
+              </div>
+              <input type="range" id="iouSlider" min="0.10" max="0.80" step="0.05" value="0.45">
+            </div>
+
+            <div class="stats-grid">
+              <div class="stat-item">
+                <span class="stat-label">Độ trễ suy luận</span>
+                <span class="stat-value" id="inferenceTime">-- ms</span>
+              </div>
+              <div class="stat-item">
+                <span class="stat-label">Số hoa phát hiện</span>
+                <span class="stat-value" id="detectedCount">0</span>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Detected Flower Information Card -->
+        <div class="card info-card" id="flowerInfoCard">
+          <div class="card-header">
+            <h3 id="flowerVietnameseName">🌿 Hướng camera vào hoa</h3>
+            <span class="badge species-badge" id="flowerConfidenceBadge">Chờ nhận diện</span>
+          </div>
+          <div class="card-body">
+            <div class="flower-meta">
+              <p><strong>Tên tiếng Anh:</strong> <span id="flowerEnglishName">--</span></p>
+              <p><strong>Tên khoa học:</strong> <span id="flowerSciName">--</span></p>
+              <p><strong>Vị trí tại Phenikaa:</strong> <span id="flowerLocation">Khuôn viên trường, bồn hoa tòa A, đường nối thư viện & sân cỏ.</span></p>
+            </div>
+            <div class="flower-desc" id="flowerDescription">
+              Mẹo: Giữ camera ổn định, khoảng cách 30-60cm để mô hình nhận diện rõ các cánh hoa và nhụy hoa.
+            </div>
+          </div>
+        </div>
+
+        <!-- List of 10 supported flowers -->
+        <div class="card list-card">
+          <div class="card-header">
+            <h3>📋 10 Loài Hoa Được Hỗ Trợ</h3>
+          </div>
+          <div class="card-body">
+            <ul class="flower-tags" id="flowerTagsList">
+              <li data-class="0">Hoa chiều tím</li>
+              <li data-class="1">Hoa dâm bụt</li>
+              <li data-class="2">Hoa dâm bụt cam</li>
+              <li data-class="3">Hoa hồng</li>
+              <li data-class="4">Hoa lài tây</li>
+              <li data-class="5">Hoa mẫu đơn ta</li>
+              <li data-class="6">Hoa mía đỏ</li>
+              <li data-class="7">Hoa mỏ két</li>
+              <li data-class="8">Hoa mơ trắng</li>
+              <li data-class="9">Huỳnh anh vàng</li>
+            </ul>
+          </div>
+        </div>
+      </div>
+    </main>
+
+    <!-- Footer -->
+    <footer class="app-footer">
+      <p>© 2026 Phenikaa University • AI Campus Project • YOLOv8 + ONNX Runtime Web (Serverless Client-Side)</p>
+    </footer>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>

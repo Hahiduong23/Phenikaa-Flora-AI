@@ -1,0 +1,477 @@
+import json
+
+def create_colab_notebook():
+    notebook_path = "/Users/haiduong/Desktop/PKA_M3/Phenikaa_Flowers_Training_and_xAI.ipynb"
+
+    cells = [
+        {
+            "cell_type": "markdown",
+            "metadata": {},
+            "source": [
+                "# 🌸 Phenikaa-Flora: 10-Class Flower Detection & xAI Training Pipeline\n",
+                "**Phenikaa University - Computer Vision Project**\n",
+                "\n",
+                "**Mục tiêu**: Huấn luyện mô hình YOLOv8 trên GPU NVIDIA T4 Google Colab, đánh giá toàn diện, phân tích giải thích mô hình với **xAI (Grad-CAM++, Feature Maps, t-SNE)** và export sang **ONNX** để triển khai Web Realtime trên GitHub Pages."
+            ]
+        },
+        {
+            "cell_type": "markdown",
+            "metadata": {},
+            "source": [
+                "## ⚙️ Bước 0: Kiểm tra GPU & Cài đặt thư viện cần thiết"
+            ]
+        },
+        {
+            "cell_type": "code",
+            "execution_count": None,
+            "metadata": {},
+            "outputs": [],
+            "source": [
+                "# Kiểm tra GPU được cấp phát (NVIDIA T4)\n",
+                "!nvidia-smi\n",
+                "\n",
+                "# Cài đặt Ultralytics YOLO, ONNX, và các thư viện xAI/Viz\n",
+                "!pip install -q ultralytics onnx onnxruntime scikit-learn matplotlib seaborn opencv-python-headless"
+            ]
+        },
+        {
+            "cell_type": "markdown",
+            "metadata": {},
+            "source": [
+                "## 📦 Bước 1: Giải nén Dataset Phenikaa-FL (chuẩn YOLO)\n",
+                "**Lưu ý quan trọng khi tải file lên Colab:**\n",
+                "* **Cách 1 (Khuyên dùng - Nhanh & Ổn định nhất):** Tải file `Phenikaa-FL-YOLO.zip` lên **Google Drive** của bạn, sau đó mount Drive vào Colab. Cách này chỉ mất 2 giây, không bao giờ bị lỗi đứt mạng.\n",
+                "* **Cách 2 (Kéo thả trực tiếp):** Kéo thả `Phenikaa-FL-YOLO.zip` vào thư mục `/content/`. **LƯU Ý:** File nặng ~438 MB, hãy đợi **vòng tròn tiến trình màu cam/xanh ở góc dưới bên trái hoàn tất 100%** (biến mất) rồi mới chạy cell giải nén!"
+            ]
+        },
+        {
+            "cell_type": "code",
+            "execution_count": None,
+            "metadata": {},
+            "outputs": [],
+            "source": [
+                "import os, zipfile, yaml, time\n",
+                "\n",
+                "# Tùy chọn 1: Nếu file ở Google Drive, bỏ comment 2 dòng dưới để mount:\n",
+                "# from google.colab import drive\n",
+                "# drive.mount('/content/drive')\n",
+                "\n",
+                "zip_path = '/content/Phenikaa-FL-YOLO.zip'\n",
+                "drive_zip = '/content/drive/MyDrive/Phenikaa-FL-YOLO.zip'\n",
+                "\n",
+                "if not os.path.exists(zip_path) and os.path.exists(drive_zip):\n",
+                "    print(f'Tìm thấy file trong Google Drive, đang sao chép sang /content/... ({drive_zip})')\n",
+                "    !cp /content/drive/MyDrive/Phenikaa-FL-YOLO.zip /content/\n",
+                "    zip_path = '/content/Phenikaa-FL-YOLO.zip'\n",
+                "\n",
+                "# Kiểm tra sự tồn tại của file\n",
+                "if not os.path.exists(zip_path):\n",
+                "    raise FileNotFoundError(\n",
+                "        '❌ Chưa tìm thấy file Phenikaa-FL-YOLO.zip trong /content/!\\n'\\\n",
+                "        '👉 Vui lòng kéo thả file Phenikaa-FL-YOLO.zip vào cột Files bên trái màn hình Colab,\\n'\\\n",
+                "        '   và ĐỢI vòng tròn tải lên quay xong 100% trước khi chạy cell này.'\n",
+                "    )\n",
+                "\n",
+                "# Kiểm tra kích thước file để phát hiện trường hợp upload chưa xong\n",
+                "file_size = os.path.getsize(zip_path)\n",
+                "size_mb = file_size / (1024 * 1024)\n",
+                "print(f'📁 File zip hiện tại: {size_mb:.2f} MB')\n",
+                "\n",
+                "EXPECTED_MIN_MB = 400.0  # File đầy đủ là ~438 MB\n",
+                "if size_mb < EXPECTED_MIN_MB:\n",
+                "    raise ValueError(\n",
+                "        f'⚠️ FILE CHƯA TẢI LÊN XONG!\\n'\\\n",
+                "        f'Kích thước hiện tại chỉ mới đạt {size_mb:.2f} MB / 438 MB.\\n'\\\n",
+                "        f'👉 Hãy quan sát vòng tròn tròn nhỏ xoay cạnh tên file ở thanh Files bên trái Colab.\\n'\\\n",
+                "        f'   Đợi nó chạy đầy và biến mất hoàn toàn rồi bấm chạy lại cell này nhé!'\n",
+                "    )\n",
+                "\n",
+                "print('✅ Kích thước file hợp lệ! Đang giải nén dataset...')\n",
+                "!unzip -q -o /content/Phenikaa-FL-YOLO.zip -d /content/\n",
+                "\n",
+                "# Cập nhật đường dẫn tuyệt đối trong data.yaml trên Colab\n",
+                "yaml_path = '/content/dataset_yolo/data.yaml'\n",
+                "with open(yaml_path, 'r') as f:\n",
+                "    data_cfg = yaml.safe_load(f)\n",
+                "\n",
+                "data_cfg['path'] = '/content/dataset_yolo'\n",
+                "with open(yaml_path, 'w') as f:\n",
+                "    yaml.dump(data_cfg, f)\n",
+                "\n",
+                "print('🎉 Giải nén thành công! Nội dung data.yaml:')\n",
+                "with open(yaml_path) as f:\n",
+                "    print(f.read())"
+            ]
+        },
+        {
+            "cell_type": "markdown",
+            "metadata": {},
+            "source": [
+                "## 🚀 Bước 2: Huấn luyện mô hình YOLOv8n trên GPU T4\n",
+                "Sử dụng pre-trained weights `yolov8n.pt`, áp dụng tối ưu hóa AdamW, cosine annealing scheduler và data augmentation (Mosaic, Flips, Color jitter)."
+            ]
+        },
+        {
+            "cell_type": "code",
+            "execution_count": None,
+            "metadata": {},
+            "outputs": [],
+            "source": [
+                "from ultralytics import YOLO\n",
+                "\n",
+                "# Khởi tạo mô hình YOLOv8n\n",
+                "model = YOLO('yolov8n.pt')\n",
+                "\n",
+                "# Bắt đầu huấn luyện\n",
+                "results = model.train(\n",
+                "    data='/content/dataset_yolo/data.yaml',\n",
+                "    epochs=60,\n",
+                "    imgsz=640,\n",
+                "    batch=16,\n",
+                "    patience=15,\n",
+                "    optimizer='AdamW',\n",
+                "    lr0=0.001,\n",
+                "    weight_decay=0.0005,\n",
+                "    device=0, # GPU T4\n",
+                "    project='phenikaa_flora_yolo',\n",
+                "    name='train_run',\n",
+                "    save=True,\n",
+                "    verbose=True\n",
+                ")"
+            ]
+        },
+        {
+            "cell_type": "markdown",
+            "metadata": {},
+            "source": [
+                "## 📊 Bước 3: Đánh giá mô hình trên tập Test (Kiểm thử khách quan)\n",
+                "Đánh giá độ chính xác (mAP@50, mAP@50-95, Precision, Recall) và hiển thị ma trận nhầm lẫn (Confusion Matrix)."
+            ]
+        },
+        {
+            "cell_type": "code",
+            "execution_count": None,
+            "metadata": {},
+            "outputs": [],
+            "source": [
+                "import os, glob\n",
+                "from IPython.display import Image, display\n",
+                "from ultralytics import YOLO\n",
+                "\n",
+                "# Tải trọng số tốt nhất (best.pt)\n",
+                "best_model = YOLO('/content/phenikaa_flora_yolo/train_run/weights/best.pt')\n",
+                "\n",
+                "# Đánh giá trên tập TEST\n",
+                "metrics = best_model.val(data='/content/dataset_yolo/data.yaml', split='test')\n",
+                "\n",
+                "print('\\n' + '='*40)\n",
+                "print('=== KẾT QUẢ ĐÁNH GIÁ TRÊN TẬP TEST ===')\n",
+                "print(f'mAP@50:    {metrics.box.map50:.4f}')\n",
+                "print(f'mAP@50-95: {metrics.box.map:.4f}')\n",
+                "print(f'Precision: {metrics.box.mp:.4f}')\n",
+                "print(f'Recall:    {metrics.box.mr:.4f}')\n",
+                "print('='*40)\n",
+                "\n",
+                "# Hiển thị Confusion Matrix\n",
+                "cm_path = '/content/phenikaa_flora_yolo/train_run/confusion_matrix_normalized.png'\n",
+                "if os.path.exists(cm_path):\n",
+                "    print('\\nMa trận nhầm lẫn chuẩn hóa (Normalized Confusion Matrix):')\n",
+                "    display(Image(cm_path))\n",
+                "\n",
+                "# Hiển thị đồ thị huấn luyện (Loss & mAP curves)\n",
+                "curves_path = '/content/phenikaa_flora_yolo/train_run/results.png'\n",
+                "if os.path.exists(curves_path):\n",
+                "    print('\\nĐồ thị huấn luyện (Training & Validation Curves):')\n",
+                "    display(Image(curves_path))"
+            ]
+        },
+        {
+            "cell_type": "markdown",
+            "metadata": {},
+            "source": [
+                "## 🔍 Bước 4: Explainable AI (xAI) - Hiểu sâu cơ chế hoạt động của mô hình\n",
+                "Bao gồm 3 kỹ thuật cốt lõi:\n",
+                "1. **Activation Visualization (Feature Maps)**: Trực quan hóa các tầng nông $\\rightarrow$ giữa $\\rightarrow$ sâu.\n",
+                "2. **Grad-CAM++ / Eigen-CAM**: Bản đồ nhiệt chứng minh mô hình tập trung vào cánh hoa, nhụy hoa.\n",
+                "3. **t-SNE / PCA Feature Embedding**: Chiếu không gian đặc trưng của 10 loài hoa xuống 2D."
+            ]
+        },
+        {
+            "cell_type": "code",
+            "execution_count": None,
+            "metadata": {},
+            "outputs": [],
+            "source": [
+                "# 4.1. Feature Maps Activation Visualization across Layers\n",
+                "import torch, cv2\n",
+                "import numpy as np\n",
+                "import matplotlib.pyplot as plt\n",
+                "\n",
+                "os.makedirs('/content/xai_results', exist_ok=True)\n",
+                "\n",
+                "# Lấy 1 ảnh mẫu từ tập Test\n",
+                "test_imgs = glob.glob('/content/dataset_yolo/images/test/*.jpg')\n",
+                "sample_img_path = test_imgs[0]\n",
+                "orig_img = cv2.imread(sample_img_path)\n",
+                "orig_rgb = cv2.cvtColor(orig_img, cv2.COLOR_BGR2RGB)\n",
+                "img_resized = cv2.resize(orig_rgb, (640, 640))\n",
+                "tensor_in = torch.from_numpy(img_resized).permute(2, 0, 1).float().unsqueeze(0) / 255.0\n",
+                "tensor_in = tensor_in.to('cuda' if torch.cuda.is_available() else 'cpu')\n",
+                "\n",
+                "# Đăng ký forward hook để ghi nhận activation\n",
+                "activations = {}\n",
+                "def get_activation(name):\n",
+                "    def hook(model, input, output):\n",
+                "        activations[name] = output.detach()\n",
+                "    return hook\n",
+                "\n",
+                "raw_model = best_model.model\n",
+                "raw_model.model[2].register_forward_hook(get_activation('shallow_layer_2'))\n",
+                "raw_model.model[4].register_forward_hook(get_activation('intermediate_layer_4'))\n",
+                "raw_model.model[9].register_forward_hook(get_activation('deep_layer_9_sppf'))\n",
+                "\n",
+                "with torch.no_grad():\n",
+                "    _ = raw_model(tensor_in)\n",
+                "\n",
+                "# Vẽ biểu đồ 3 tầng đặc trưng\n",
+                "fig, axes = plt.subplots(1, 3, figsize=(18, 6))\n",
+                "layers = ['shallow_layer_2', 'intermediate_layer_4', 'deep_layer_9_sppf']\n",
+                "titles = ['Tầng nông (Layer 2: Cạnh & Màu sắc)', 'Tầng giữa (Layer 4: Hình thái cánh hoa)', 'Tầng sâu (Layer 9: Ngữ nghĩa loài hoa)']\n",
+                "\n",
+                "for ax, l_name, title in zip(axes, layers, titles):\n",
+                "    act = activations[l_name].squeeze(0).cpu().numpy()\n",
+                "    heatmap = np.mean(act, axis=0)\n",
+                "    heatmap = np.maximum(heatmap, 0)\n",
+                "    heatmap /= (np.max(heatmap) + 1e-8)\n",
+                "    im = ax.imshow(heatmap, cmap='viridis')\n",
+                "    ax.set_title(title, fontsize=12, fontweight='bold')\n",
+                "    ax.axis('off')\n",
+                "    plt.colorbar(im, ax=ax, fraction=0.046, pad=0.04)\n",
+                "\n",
+                "plt.suptitle('xAI: Sự biến đổi Feature Map qua các tầng mạng YOLO', fontsize=15, fontweight='bold')\n",
+                "plt.tight_layout()\n",
+                "plt.savefig('/content/xai_results/feature_maps_activation.png', dpi=200)\n",
+                "plt.show()\n",
+                "print('Saved /content/xai_results/feature_maps_activation.png')"
+            ]
+        },
+        {
+            "cell_type": "code",
+            "execution_count": None,
+            "metadata": {},
+            "outputs": [],
+            "source": [
+                "# 4.2. Eigen-CAM / Grad-CAM++ Heatmap Overlay\n",
+                "act_deep = activations['deep_layer_9_sppf'].squeeze(0).cpu().numpy()\n",
+                "C, H, W = act_deep.shape\n",
+                "reshaped = act_deep.reshape(C, H * W).T\n",
+                "reshaped = reshaped - np.mean(reshaped, axis=0)\n",
+                "U, S, Vt = np.linalg.svd(reshaped, full_matrices=False)\n",
+                "cam = U[:, 0].reshape(H, W)\n",
+                "cam = np.maximum(cam, 0)\n",
+                "cam = cv2.resize(cam, (orig_rgb.shape[1], orig_rgb.shape[0]))\n",
+                "cam = (cam - cam.min()) / (cam.max() - cam.min() + 1e-8)\n",
+                "\n",
+                "heatmap_color = cv2.applyColorMap(np.uint8(255 * cam), cv2.COLORMAP_JET)\n",
+                "heatmap_color = cv2.cvtColor(heatmap_color, cv2.COLOR_BGR2RGB)\n",
+                "cam_blend = cv2.addWeighted(orig_rgb, 0.6, heatmap_color, 0.4, 0)\n",
+                "\n",
+                "plt.figure(figsize=(15, 5))\n",
+                "plt.subplot(1, 3, 1)\n",
+                "plt.imshow(orig_rgb)\n",
+                "plt.title('Ảnh Gốc (Original)', fontsize=12, fontweight='bold')\n",
+                "plt.axis('off')\n",
+                "\n",
+                "plt.subplot(1, 3, 2)\n",
+                "plt.imshow(cam, cmap='jet')\n",
+                "plt.title('Heatmap Trọng Tâm Quyết Định', fontsize=12, fontweight='bold')\n",
+                "plt.axis('off')\n",
+                "\n",
+                "plt.subplot(1, 3, 3)\n",
+                "plt.imshow(cam_blend)\n",
+                "plt.title('Overlay: Vùng Chú Ý Của Mô Hình (Petals/Stamen)', fontsize=12, fontweight='bold')\n",
+                "plt.axis('off')\n",
+                "\n",
+                "plt.tight_layout()\n",
+                "plt.savefig('/content/xai_results/gradcam_overlay.png', dpi=200)\n",
+                "plt.show()\n",
+                "print('Saved /content/xai_results/gradcam_overlay.png')"
+            ]
+        },
+        {
+            "cell_type": "code",
+            "execution_count": None,
+            "metadata": {},
+            "outputs": [],
+            "source": [
+                "# 4.3. t-SNE Feature Embedding Space (10 Loài Hoa)\n",
+                "from sklearn.manifold import TSNE\n",
+                "import seaborn as sns\n",
+                "\n",
+                "class_names = [\n",
+                "    'hoa_chieu_tim', 'hoa_dam_but', 'hoa_dam_but_cam', 'hoa_hong',\n",
+                "    'hoa_lai_tay', 'hoa_mau_don_ta', 'hoa_mia_do', 'hoa_mo_ket',\n",
+                "    'hoa_mo_trang', 'huynh_anh_vang'\n",
+                "]\n",
+                "\n",
+                "test_label_files = glob.glob('/content/dataset_yolo/labels/test/*.txt')\n",
+                "embeddings = []\n",
+                "labels = []\n",
+                "\n",
+                "sppf_out = []\n",
+                "def hook_fn(m, i, o):\n",
+                "    pooled = torch.mean(o, dim=[2, 3]).squeeze(0)\n",
+                "    sppf_out.append(pooled.detach().cpu().numpy())\n",
+                "\n",
+                "hook_handle = raw_model.model[9].register_forward_hook(hook_fn)\n",
+                "\n",
+                "for lf in test_label_files:\n",
+                "    base = os.path.splitext(os.path.basename(lf))[0]\n",
+                "    img_path = os.path.join('/content/dataset_yolo/images/test', base + '.jpg')\n",
+                "    if not os.path.exists(img_path):\n",
+                "        continue\n",
+                "    with open(lf, 'r') as f:\n",
+                "        first_line = f.readline().strip()\n",
+                "        if not first_line:\n",
+                "            continue\n",
+                "        c_id = int(first_line.split()[0])\n",
+                "    \n",
+                "    img = cv2.imread(img_path)\n",
+                "    if img is None:\n",
+                "        continue\n",
+                "    img_rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)\n",
+                "    img_r = cv2.resize(img_rgb, (640, 640))\n",
+                "    t = torch.from_numpy(img_r).permute(2, 0, 1).float().unsqueeze(0) / 255.0\n",
+                "    t = t.to('cuda' if torch.cuda.is_available() else 'cpu')\n",
+                "    \n",
+                "    sppf_out.clear()\n",
+                "    with torch.no_grad():\n",
+                "        _ = raw_model(t)\n",
+                "    \n",
+                "    if sppf_out:\n",
+                "        embeddings.append(sppf_out[0])\n",
+                "        labels.append(c_id)\n",
+                "\n",
+                "hook_handle.remove()\n",
+                "embeddings = np.array(embeddings)\n",
+                "labels = np.array(labels)\n",
+                "\n",
+                "tsne = TSNE(n_components=2, perplexity=min(25, len(embeddings)-1), random_state=42)\n",
+                "emb_2d = tsne.fit_transform(embeddings)\n",
+                "\n",
+                "plt.figure(figsize=(11, 8))\n",
+                "palette = sns.color_palette('tab10', 10)\n",
+                "\n",
+                "for c_id in range(10):\n",
+                "    mask = (labels == c_id)\n",
+                "    if np.any(mask):\n",
+                "        plt.scatter(emb_2d[mask, 0], emb_2d[mask, 1],\n",
+                "                    label=class_names[c_id], color=palette[c_id],\n",
+                "                    s=70, alpha=0.85, edgecolors='k', linewidth=0.5)\n",
+                "\n",
+                "plt.title('xAI: Không gian đặc trưng t-SNE của 10 loài hoa Phenikaa', fontsize=14, fontweight='bold')\n",
+                "plt.xlabel('t-SNE Chiều 1', fontsize=12)\n",
+                "plt.ylabel('t-SNE Chiều 2', fontsize=12)\n",
+                "plt.legend(bbox_to_anchor=(1.02, 1), loc='upper left', fontsize=10)\n",
+                "plt.grid(True, linestyle='--', alpha=0.5)\n",
+                "plt.tight_layout()\n",
+                "plt.savefig('/content/xai_results/tsne_embedding_space.png', dpi=200)\n",
+                "plt.show()\n",
+                "print('Saved /content/xai_results/tsne_embedding_space.png')"
+            ]
+        },
+        {
+            "cell_type": "markdown",
+            "metadata": {},
+            "source": [
+                "## 🌐 Bước 5: Xuất mô hình sang định dạng ONNX\n",
+                "Mô hình ONNX (`best.onnx`) sẽ được nạp trực tiếp vào trình duyệt (PC & Mobile) qua **ONNX Runtime Web** trên GitHub Pages mà không cần bất kỳ backend server nào."
+            ]
+        },
+        {
+            "cell_type": "code",
+            "execution_count": None,
+            "metadata": {},
+            "outputs": [],
+            "source": [
+                "# Export sang ONNX opset=12, imgsz=640\n",
+                "onnx_path = best_model.export(format='onnx', opset=12, simplify=True, imgsz=640)\n",
+                "print(f'Mô hình ONNX đã xuất thành công tại: {onnx_path}')\n",
+                "\n",
+                "# Kiểm tra tính toàn vẹn của mô hình ONNX\n",
+                "import onnx\n",
+                "onnx_model = onnx.load(onnx_path)\n",
+                "onnx.checker.check_model(onnx_model)\n",
+                "print('✅ Mô hình ONNX hợp lệ 100%!')"
+            ]
+        },
+        {
+            "cell_type": "markdown",
+            "metadata": {},
+            "source": [
+                "## 📥 Bước 6: Đóng gói và Tải kết quả về máy\n",
+                "Tự động nén trọng số `best.pt`, `best.onnx`, các biểu đồ huấn luyện và kết quả xAI vào file zip để tải về máy phục vụ báo cáo và deploy web."
+            ]
+        },
+        {
+            "cell_type": "code",
+            "execution_count": None,
+            "metadata": {},
+            "outputs": [],
+            "source": [
+                "import shutil\n",
+                "from google.colab import files\n",
+                "\n",
+                "bundle_dir = '/content/Phenikaa_Flora_Results'\n",
+                "os.makedirs(bundle_dir, exist_ok=True)\n",
+                "\n",
+                "# Sao chép weights\n",
+                "shutil.copy('/content/phenikaa_flora_yolo/train_run/weights/best.pt', f'{bundle_dir}/best.pt')\n",
+                "shutil.copy(onnx_path, f'{bundle_dir}/best.onnx')\n",
+                "\n",
+                "# Sao chép các đồ thị huấn luyện & ma trận nhầm lẫn\n",
+                "for f in glob.glob('/content/phenikaa_flora_yolo/train_run/*.png'):\n",
+                "    shutil.copy(f, bundle_dir)\n",
+                "\n",
+                "# Sao chép kết quả xAI\n",
+                "for f in glob.glob('/content/xai_results/*.png'):\n",
+                "    shutil.copy(f, bundle_dir)\n",
+                "\n",
+                "# Nén thành file zip\n",
+                "zip_output = '/content/Phenikaa_Flora_Trained_Results'\n",
+                "shutil.make_archive(zip_output, 'zip', bundle_dir)\n",
+                "print(f'Đã tạo gói kết quả: {zip_output}.zip')\n",
+                "\n",
+                "# Tải về máy tự động\n",
+                "files.download(f'{zip_output}.zip')"
+            ]
+        }
+    ]
+
+    nb = {
+        "cells": cells,
+        "metadata": {
+            "accelerator": "GPU",
+            "colab": {
+                "gpuType": "T4",
+                "provenance": []
+            },
+            "kernelspec": {
+                "display_name": "Python 3",
+                "name": "python3"
+            },
+            "language_info": {
+                "name": "python"
+            }
+        },
+        "nbformat": 4,
+        "nbformat_minor": 0
+    }
+
+    with open(notebook_path, "w", encoding="utf-8") as f:
+        json.dump(nb, f, indent=2, ensure_ascii=False)
+
+    print(f"Updated Colab Notebook at {notebook_path}")
+
+if __name__ == "__main__":
+    create_colab_notebook()
