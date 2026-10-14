@@ -9,8 +9,11 @@ Thumbs.db
 
 # Large dataset files (>100MB exceeds GitHub limit)
 Phenikaa-FL-YOLO.zip
+Phenikaa-Flora-Merged-10.zip
 Phenikaa-FL/
 dataset_yolo/
+Data_14/
+dataset_merged_10/
 
 # Python cache & virtual environments
 __pycache__/
