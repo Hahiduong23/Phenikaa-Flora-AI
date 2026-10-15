@@ -157,8 +157,9 @@ async function initSession() {
   modelStatusText.innerText = "Đang tải model...";
 
   try {
-    // Check if best.onnx is accessible
-    const response = await fetch("best.onnx", { method: "HEAD" });
+    // Check if best.onnx is accessible (with cache-busting v=merged10)
+    const modelUrl = "best.onnx?v=merged10";
+    const response = await fetch(modelUrl, { method: "HEAD" });
     if (!response.ok) {
       throw new Error("Chưa tìm thấy file best.onnx");
     }
@@ -169,10 +170,10 @@ async function initSession() {
       graphOptimizationLevel: "all"
     };
 
-    session = await ort.InferenceSession.create("best.onnx", sessionOptions);
+    session = await ort.InferenceSession.create(modelUrl, sessionOptions);
     isModelReady = true;
     statusDot.classList.add("active");
-    modelStatusText.innerText = "YOLOv8 Sẵn sàng";
+    modelStatusText.innerText = "YOLOv8 Sẵn sàng (Dataset V2)";
     viewportLoader.style.display = "none";
     console.log("ONNX session created successfully!", session.inputNames, session.outputNames);
   } catch (error) {

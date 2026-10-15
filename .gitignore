@@ -25,3 +25,6 @@ venv/
 env/
 .venv/
 .ipynb_checkpoints/
+
+# Office temporary files
+~$*
