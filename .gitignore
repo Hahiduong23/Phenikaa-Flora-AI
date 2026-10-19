@@ -28,3 +28,6 @@ env/
 
 # Office temporary files
 ~$*
+
+# Ultralytics runs directory
+runs/
